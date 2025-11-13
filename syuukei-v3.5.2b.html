@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>集計ちゃん v3.5.2b</title>
+<style>
+  body { font-family: sans-serif; padding: 20px; }
+  .table-wrapper { overflow-x: auto; }
+  table { 
+      border-collapse: collapse; 
+      table-layout: fixed;
+      width: max-content;
+  }
+  th, td { 
+      border: 1px solid #999; 
+      padding: 5px 10px; 
+      text-align: center; 
+      white-space: nowrap; 
+      width: 80px; 
+  }
+  th { background-color: #eee; cursor: pointer; }
+  .dns { color: red; font-weight: bold; }
+  .cut { color: blue; font-weight: bold; }
+
+  button {
+      font-size: 1.2em;
+      padding: 14px 24px;
+      margin: 5px 5px;
+      min-width: 140px;
+      cursor: pointer;
+      border-radius: 6px;
+      border: 1px solid #666;
+      background-color: #f0f0f0;
+  }
+  button:active { background-color: #ddd; }
+
+  select, input[type="text"], input[type="number"] {
+      font-size: 1.1em;
+      padding: 10px;
+      min-width: 140px;
+      margin: 5px 5px;
+      border-radius: 5px;
+      border: 1px solid #999;
+      box-sizing: border-box;
+  }
+
+  input[type="file"] { display: none; }
+
+  /* ボタン色 */
+  #handleCSVBtn { background-color: #4CAF50; color: white; }  /* 緑 */
+  #downloadCSVBtn { background-color: #2196F3; color: white; } /* 青 */
+  #recalcBtn { background-color: #FF9800; color: white; }      /* オレンジ */
+  #manualHeatBtn { background-color: #9C27B0; color: white; }  /* 紫 */
+
+  /* モーダル */
+  #manualHeatModal {
+      position: fixed;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      background: #fff;
+      border: 2px solid #666;
+      padding: 20px;
+      z-index: 1000;
+      max-height: 80%;
+      overflow-y: auto;
+      display: none;
+  }
+</style>
+</head>
+<body>
+
+<h2>集計ちゃん  <span style="font-size:0.7em;">by Popolo v3.5.2b</span></h2>
+
+<label>種目: 
+  <select id="discipline">
+    <option value="yacht">ヨット／ウイングフォイル</option>
+    <option value="wind">ウインドサーフィン</option>
+  </select>
+</label>
+<br><br>
+
+<label>カット設定（ヒート数を入力）:</label><br>
+1カットヒート: <input type="number" id="cut1Heat" placeholder="例: 4" style="width:80px; text-align:center;">
+2カットヒート: <input type="number" id="cut2Heat" placeholder="例: 8" style="width:80px; text-align:center;">
+<br><br>
+
+<label>参加選手番号（カンマ区切り）:</label>
+<input type="text" id="participantList" placeholder="001,002,003,004">
+<span id="participantCount" style="margin-left:10px;">0名</span>
+<br>
+
+<!-- 参加者CSV読み取り -->
+<button id="loadParticipantBtn">参加選手リストの読取</button>
+<span id="participantFileName">未選択</span>
+<input type="file" id="participantCSV" accept=".csv">
+
+<br><br>
+
+<button id="csvFileBtn">ヒート結果を読取</button>
+<input type="file" id="csvFile" accept=".csv">
+<span id="heatFileName">未選択</span>
+<br><br>
+
+<button id="handleCSVBtn" onclick="handleCSV()">ヒート追加</button>
+<button id="manualHeatBtn">ヒート手入力</button>
+<button id="downloadCSVBtn" onclick="downloadCSV()">総合結果をCSV出力</button>
+<button id="recalcBtn" onclick="updateTable()">再計算</button>
+
+<div id="tableContainer"></div>
+
+<!-- 手入力モーダル -->
+<div id="manualHeatModal" style="display:none; border:1px solid #999; padding:10px; background:#fff;">
+    <h3>手入力ヒート</h3>
+    <div id="manualHeatInputs"></div>
+    <button id="manualAddBtn">追加</button>
+    <button onclick="submitManualHeat()">確定</button>
+    <button onclick="closeManualHeatModal()">キャンセル</button>
+</div>
+
+
+<script>
+let results = {};
+let heats = [];
+let cutSettings = {};
+let participants = [];
+let seriesCount = 0;
+let displayOrder = [];
+let currentSortAsc = true;
+
+// --- 参加者CSV読取 ---
+document.getElementById('loadParticipantBtn').addEventListener('click', () => {
+    document.getElementById('participantCSV').click();
+});
+document.getElementById('participantCSV').addEventListener('change', () => {
+    const fileInput = document.getElementById('participantCSV');
+    if(!fileInput.files.length){ alert('CSVを選択してください'); return; }
+    document.getElementById('participantFileName').textContent = fileInput.files[0].name;
+
+    const reader = new FileReader();
+    reader.onload = function(e){
+        const lines = e.target.result.trim().split(/\r?\n/);
+        if(lines.length < 2){ alert('CSVの内容が不十分です'); return; }
+        const participantsArr = [];
+        for(let i=1; i<lines.length; i++){ 
+            const cols = lines[i].split(',');
+            if(cols.length < 1) continue;
+            const number = cols[0].trim();
+            if(number) participantsArr.push(number);
+        }
+        document.getElementById('participantList').value = participantsArr.join(',');
+        document.getElementById('participantCount').textContent = `${participantsArr.length}名`;
+    };
+    reader.readAsText(fileInput.files[0], 'utf-8');
+});
+
+// --- ヒートCSV選択ボタン ---
+document.getElementById('csvFileBtn').addEventListener('click', () => {
+    document.getElementById('csvFile').click();
+});
+document.getElementById('csvFile').addEventListener('change', () => {
+    const fileInput = document.getElementById('csvFile');
+    document.getElementById('heatFileName').textContent = fileInput.files.length ? fileInput.files[0].name : "未選択";
+});
+
+// --- CSV処理 ---
+function handleCSV(){
+    const fileInput = document.getElementById('csvFile');
+    if(!fileInput.files.length){ alert('CSVを選択してください'); return; }
+
+    const participantText = document.getElementById('participantList').value.trim();
+    if(!participantText){ alert('参加選手番号を入力してください'); return; }
+
+    const updatedParticipants = participantText.split(',').map(s=>s.trim());
+    seriesCount = updatedParticipants.length;
+
+    updatedParticipants.forEach(name=>{
+        if(!results[name]){
+            results[name] = Array(heats.length).fill(seriesCount + 1);
+        }
+    });
+
+    participants = updatedParticipants.slice();
+    displayOrder = participants.slice();
+
+    const reader = new FileReader();
+    reader.onload = function(e){
+        parseCSV(e.target.result);
+        updateTable();
+    };
+    reader.readAsText(fileInput.files[0], 'utf-8');
+}
+
+// --- CSV解析 ---
+function parseCSV(text){
+    const lines = text.trim().split(/\r?\n/);
+    if(lines.length < 2) return;
+    let heatName = "Heat" + (heats.length + 1);
+    heats.push(heatName);
+    let heatPoints = {};
+    for(let i=1;i<lines.length;i++){
+        const cols = lines[i].split(',');
+        if(cols.length < 3) continue;
+        const rankStr = cols[1].trim();
+        const colorNumber = cols[2].trim();
+        if(!participants.includes(colorNumber)) continue;
+        let rank = parseInt(rankStr,10);
+        heatPoints[colorNumber] = !isNaN(rank) ? rank : seriesCount + 1;
+    }
+    participants.forEach(name=>{
+        if(!results[name]) results[name] = Array(heats.length - 1).fill(seriesCount + 1);
+        results[name].push(heatPoints[name] !== undefined ? heatPoints[name] : seriesCount + 1);
+    });
+}
+
+// --- 手入力ヒート ---
+<!-- 変更部分のみ抜粋 -->
+<!-- 手入力ヒート -->
+document.getElementById('manualHeatBtn').addEventListener('click', ()=>{
+    if(participants.length === 0){ alert('参加者リストが空です'); return; }
+    const container = document.getElementById('manualHeatInputs');
+    container.innerHTML = '';
+    const heatSize = participants.length;
+    for(let i=1;i<=heatSize;i++){
+        container.innerHTML += `${i}位: <input type="text" id="manual_rank_${i}" placeholder="選手番号"><br>`;
+    }
+    document.getElementById('manualHeatModal').style.display = 'block';
+});
+
+function submitManualHeat(){
+    const heatName = "Heat" + (heats.length + 1);
+    heats.push(heatName);
+
+    const heatPoints = {};
+    participants.forEach(p=>{
+        results[p] = results[p] || Array(heats.length-1).fill(seriesCount+1);
+    });
+
+    for(let i=1;i<=participants.length;i++){
+        const input = document.getElementById('manual_rank_'+i).value.trim();
+        if(input && participants.includes(input)){
+            heatPoints[input] = i; // 順位をポイントに変換
+        }
+    }
+
+    // 未入力や不正番号は DNS
+    participants.forEach(p=>{
+        results[p].push(heatPoints[p] !== undefined ? heatPoints[p] : seriesCount+1);
+    });
+
+    updateTable();
+    closeManualHeatModal();
+}
+
+
+
+
+
+
+// --- ネットポイント計算 ---
+function getCutCount(heatCount){
+    let count = 0;
+    for(let key of Object.keys(cutSettings).sort((a,b)=>a-b)){
+        if(heatCount >= key) count = cutSettings[key];
+    }
+    return count;
+}
+
+function calculateNetPoints(){
+    let netResults = {};
+    const discipline = document.getElementById('discipline').value;
+    
+    for(let name of participants){
+        let points = results[name].slice();
+        let cutCount = getCutCount(points.length);
+        let sortedForCut = points.map((p,i)=>({p,i})).sort((a,b)=>b.p - a.p); 
+        let cuts = [];
+        let keptPoints = [];
+        let cutIndices = new Set();
+        if(cutCount > 0){
+            for(let i=0; i < cutCount; i++){
+                if(sortedForCut[i]) cutIndices.add(sortedForCut[i].i);
+            }
+        }
+        let totalPoints = 0;
+        for(let i=0; i < points.length; i++){
+            totalPoints += points[i];
+            if(cutIndices.has(i)){
+                cuts.push(points[i]);
+            } else {
+                keptPoints.push(points[i]);
+            }
+        }
+        let netPoints = totalPoints - cuts.reduce((a,b)=>a+b,0);
+        keptPoints.sort((a,b)=>a-b);
+        netResults[name] = {
+            points, 
+            cuts: cuts.sort((a,b)=>b-a),
+            net: netPoints,
+            total: totalPoints,
+            discipline,
+            keptPoints,
+            cutsSorted: cuts.slice().sort((a,b)=>a-b),
+            allPointsSorted: points.slice().sort((a,b)=>a-b),
+            allPointsReversed: points.slice().reverse()
+        };
+    }
+    return netResults;
+}
+
+// --- 表更新 ---
+function updateTable(){
+    cutSettings = {};
+    const cut1 = parseInt(document.getElementById('cut1Heat').value);
+    const cut2 = parseInt(document.getElementById('cut2Heat').value);
+    if(!isNaN(cut1)) cutSettings[cut1] = 1;
+    if(!isNaN(cut2)) cutSettings[cut2] = 2;
+
+    const netResults = calculateNetPoints();
+
+    let html = "<table id='resultsTable'><tr>";
+    html += `<th onclick="sortTableByColumn(0,true)">順位</th>`;
+    html += `<th>選手名</th>`;
+    heats.forEach((h,i)=>html += `<th onclick="deleteHeat(${i})">${h}</th>`);
+    html += "<th>カット前合計</th>";
+    let maxCut = Math.max(...Object.values(cutSettings),0);
+    for(let i=1;i<=maxCut;i++){ html += `<th>カット${i}</th>`; }
+    html += "<th>Net</th></tr>";
+
+    displayOrder.forEach((name,index)=>{
+        let r = netResults[name];
+        html += `<tr><td>${index+1}</td><td>${name}</td>`;
+        r.points.forEach(p=>{ html += `<td>${p === seriesCount + 1 ? "<span class='dns'>"+p+"</span>" : p}</td>`; });
+        html += `<td>${r.total}</td>`;
+        for(let i=0;i<maxCut;i++){ html += `<td>${r.cuts[i] !== undefined ? "<span class='cut'>"+r.cuts[i]+"</span>":""}</td>`; }
+        html += `<td>${r.net}</td></tr>`;
+    });
+
+    document.getElementById('tableContainer').innerHTML = "<div class='table-wrapper'>"+html+"</div>";
+}
+
+// --- ヒート削除 ---
+function deleteHeat(index){
+    if(!confirm(`"${heats[index]}" を削除しますか？`)) return;
+    heats.splice(index,1);
+    participants.forEach(name=>{
+        if(results[name] && results[name].length>index) results[name].splice(index,1);
+    });
+    updateTable();
+}
+
+// --- 順位ソート ---
+function sortTableByColumn(colIndex){
+    if(colIndex !== 0) return;
+    const netResults = calculateNetPoints();
+    const discipline = document.getElementById('discipline').value;
+    
+    displayOrder.sort((a,b)=>{
+        let rA = netResults[a];
+        let rB = netResults[b];
+        let netDiff = rA.net - rB.net;
+        if(netDiff !== 0) return currentSortAsc ? netDiff : -netDiff;
+        let tieBreakResult = 0;
+        if(discipline==='yacht'){
+            tieBreakResult = compareArrays(rA.keptPoints, rB.keptPoints);
+            if(tieBreakResult !==0) return currentSortAsc ? tieBreakResult : -tieBreakResult;
+            let keptReversedA = rA.points.filter((p,i)=>rA.cuts.indexOf(p)===-1).reverse();
+            let keptReversedB = rB.points.filter((p,i)=>rB.cuts.indexOf(p)===-1).reverse();
+            tieBreakResult = compareArrays(keptReversedA, keptReversedB);
+            if(tieBreakResult !==0) return currentSortAsc ? tieBreakResult : -tieBreakResult;
+        } else if(discipline==='wind'){
+            tieBreakResult = compareArrays(rA.cutsSorted, rB.cutsSorted);
+            if(tieBreakResult !==0) return currentSortAsc ? tieBreakResult : -tieBreakResult;
+            tieBreakResult = compareArrays(rA.allPointsSorted, rB.allPointsSorted);
+            if(tieBreakResult !==0) return currentSortAsc ? tieBreakResult : -tieBreakResult;
+            let keptReversedA = rA.points.filter((p,i)=>rA.cuts.indexOf(p)===-1).reverse();
+            let keptReversedB = rB.points.filter((p,i)=>rB.cuts.indexOf(p)===-1).reverse();
+            tieBreakResult = compareArrays(keptReversedA, keptReversedB);
+            if(tieBreakResult !==0) return currentSortAsc ? tieBreakResult : -tieBreakResult;
+        }
+        return currentSortAsc ? a.localeCompare(b) : b.localeCompare(a);
+    });
+
+    updateTable();
+    currentSortAsc = !currentSortAsc;
+}
+
+// --- 配列比較 ---
+function compareArrays(arrA, arrB){
+    const len = Math.max(arrA.length, arrB.length);
+    for(let i=0; i < len; i++){
+        const valA = arrA[i] !== undefined ? arrA[i] : Infinity;
+        const valB = arrB[i] !== undefined ? arrB[i] : Infinity;
+        if(valA !== valB) return valA - valB;
+    }
+    return 0;
+}
+
+// --- CSV出力 ---
+function downloadCSV(){
+    const netResults = calculateNetPoints();
+    let csv = "順位,選手名,カット前合計," + heats.join(",") + ",カット,Net\n";
+    displayOrder.forEach((name,index)=>{
+        let r = netResults[name];
+        csv += `${index+1},${name},${r.total},${r.points.join(",")},(${r.cuts.join(',')}),${r.net}\n`;
+    });
+    const blob = new Blob([csv], {type:'text/csv'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = "総合結果_v3.5.1.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+
+
+
+let manualNextRank = 1; // 現在追加する順位
+
+function openManualHeat(){
+    if(participants.length === 0){ alert('参加者リストが空です'); return; }
+    manualNextRank = 1;
+    const container = document.getElementById('manualHeatInputs');
+    container.innerHTML = '';
+    addManualRankInput();
+    document.getElementById('manualHeatModal').style.display = 'block';
+}
+
+function addManualRankInput(){
+    const container = document.getElementById('manualHeatInputs');
+    const div = document.createElement('div');
+    div.innerHTML = `${manualNextRank}位: <input type="text" class="manualRankInput" placeholder="選手番号">`;
+    container.appendChild(div);
+
+    const input = div.querySelector('input');
+    input.focus();
+    input.addEventListener('keydown', (e)=>{
+        if(e.key === 'Enter'){
+            submitManualHeat(); // Enterで確定
+        }
+    });
+
+    manualNextRank++;
+}
+
+// 「追加」ボタン
+document.getElementById('manualAddBtn').addEventListener('click', ()=>{
+    addManualRankInput();
+});
+
+// 確定ボタン
+function submitManualHeat(){
+    const inputs = document.querySelectorAll('.manualRankInput');
+    if(inputs.length === 0) return;
+
+    const heatName = "Heat" + (heats.length + 1);
+    heats.push(heatName);
+
+    const heatPoints = {};
+    participants.forEach(p=>{
+        results[p] = results[p] || Array(heats.length-1).fill(seriesCount+1);
+    });
+
+    inputs.forEach((input, idx)=>{
+        const val = input.value.trim();
+        if(val && participants.includes(val)){
+            heatPoints[val] = idx + 1; // 順位をポイント化
+        }
+    });
+
+    participants.forEach(p=>{
+        results[p].push(heatPoints[p] !== undefined ? heatPoints[p] : seriesCount+1);
+    });
+
+    updateTable();
+    closeManualHeatModal();
+}
+
+function closeManualHeatModal(){
+    document.getElementById('manualHeatModal').style.display = 'none';
+}
+
+
+
+
+
+</script>
+</body>
+</html>
