@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>集計ちゃん v3.3.2</title>
+<style>
+  /* ボタン色 */
+  #handleCSVBtn { background-color: #4CAF50; color: white; }  /* 緑 */
+  #downloadCSVBtn { background-color: #2196F3; color: white; } /* 青 */
+  #recalcBtn { background-color: #FF9800; color: white; }      /* オレンジ */
+
+  body { font-family: sans-serif; padding: 20px; }
+  .table-wrapper { overflow-x: auto; }
+  table { border-collapse: collapse; table-layout: fixed; width: max-content; }
+  th, td { border: 1px solid #999; padding: 5px 10px; text-align: center; white-space: nowrap; width: 80px; }
+  th { background-color: #eee; cursor: pointer; }
+  .dns { color: red; font-weight: bold; }
+  .cut { color: blue; font-weight: bold; }
+
+  button {
+      font-size: 1.2em;
+      padding: 14px 24px;
+      margin: 5px 5px;
+      min-width: 140px;
+      cursor: pointer;
+      border-radius: 6px;
+      border: 1px solid #666;
+      background-color: #f0f0f0;
+  }
+  button:active { background-color: #ddd; }
+
+  select, input[type="text"], input[type="number"] {
+      font-size: 1.1em;
+      padding: 10px;
+      min-width: 140px;
+      margin: 5px 5px;
+      border-radius: 5px;
+      border: 1px solid #999;
+      box-sizing: border-box;
+  }
+
+  input[type="file"] { display: none; }
+</style>
+</head>
+<body>
+
+<h2>集計ちゃん  <span style="font-size:0.7em;">by Popolo v3.3.2</span></h2>
+
+<label>種目: 
+  <select id="discipline">
+    <option value="yacht">ヨット／ウイングフォイル</option>
+    <option value="wind">ウインドサーフィン</option>
+  </select>
+</label>
+<br><br>
+
+<label>カット設定（ヒート数を入力）:</label><br>
+1カットヒート: <input type="number" id="cut1Heat" placeholder="例: 4" style="width:80px; text-align:center;">
+2カットヒート: <input type="number" id="cut2Heat" placeholder="例: 8" style="width:80px; text-align:center;">
+<br><br>
+
+<label>参加選手番号（カンマ区切り）:</label>
+<input type="text" id="participantList" placeholder="001,002,003,004">
+<span id="participantCount" style="margin-left:10px;">0名</span>
+<br><br>
+
+<!-- 参加者CSV読み取り -->
+<button id="loadParticipantBtn">参加選手リストの読取</button>
+<span id="participantFileName">未選択</span>
+<input type="file" id="participantCSV" accept=".csv">
+
+<br><br>
+
+<!-- ヒートCSV -->
+<button id="csvFileBtn">ヒート結果を読取</button>
+<span id="csvFileName">未選択</span>
+<input type="file" id="csvFile" accept=".csv">
+
+<br><br>
+
+<button id="handleCSVBtn" onclick="handleCSV()">ヒート追加</button>
+<button id="downloadCSVBtn" onclick="downloadCSV()">総合結果をCSV出力</button>
+<button id="recalcBtn" onclick="updateTable()">再計算</button>
+
+<div id="tableContainer"></div>
+
+<script>
+let results = {};
+let heats = [];
+let cutSettings = {};
+let participants = [];
+let seriesCount = 0;
+
+// --- 参加者CSV読取 ---
+const participantFileInput = document.getElementById('participantCSV');
+const participantFileName = document.getElementById('participantFileName');
+document.getElementById('loadParticipantBtn').addEventListener('click', () => {
+    participantFileInput.click();
+});
+participantFileInput.addEventListener('change', () => {
+    if(!participantFileInput.files.length){ return; }
+    participantFileName.textContent = participantFileInput.files[0].name;
+    const reader = new FileReader();
+    reader.onload = function(e){
+        const lines = e.target.result.trim().split(/\r?\n/);
+        if(lines.length < 2){ alert('CSVの内容が不十分です'); return; }
+        const participantsArr = [];
+        for(let i=1; i<lines.length; i++){ // 1行目スキップ
+            const cols = lines[i].split(',');
+            const number = cols[0].trim();
+            if(number) participantsArr.push(number);
+        }
+        document.getElementById('participantList').value = participantsArr.join(',');
+        document.getElementById('participantCount').textContent = `${participantsArr.length}名`;
+    };
+    reader.readAsText(participantFileInput.files[0], 'utf-8');
+});
+
+// --- ヒートCSV選択 ---
+const csvFileInput = document.getElementById('csvFile');
+const csvFileName = document.getElementById('csvFileName');
+document.getElementById('csvFileBtn').addEventListener('click', () => csvFileInput.click());
+csvFileInput.addEventListener('change', () => {
+    csvFileName.textContent = csvFileInput.files.length ? csvFileInput.files[0].name : '未選択';
+});
+
+// --- CSV処理 ---
+function handleCSV(){
+    if(!csvFileInput.files.length){ alert('CSVを選択してください'); return; }
+    const participantText = document.getElementById('participantList').value.trim();
+    if(!participantText){ alert('参加選手番号を入力してください'); return; }
+    participants = participantText.split(',').map(s=>s.trim());
+    seriesCount = participants.length;
+    participants.forEach(name=>{ if(!results[name]) results[name] = Array(heats.length).fill(seriesCount + 1); });
+
+    const reader = new FileReader();
+    reader.onload = function(e){
+        parseCSV(e.target.result);
+        updateTable();
+    };
+    reader.readAsText(csvFileInput.files[0], 'utf-8');
+}
+
+// --- CSV解析 ---
+function parseCSV(text){
+    const lines = text.trim().split(/\r?\n/);
+    if(lines.length < 2) return;
+    const heatName = "Heat" + (heats.length + 1);
+    heats.push(heatName);
+    let heatPoints = {};
+    for(let i=1; i<lines.length; i++){
+        const cols = lines[i].split(',');
+        if(cols.length < 3) continue;
+        const rank = parseInt(cols[1].trim(),10);
+        const num = cols[2].trim();
+        if(!participants.includes(num)) continue;
+        heatPoints[num] = !isNaN(rank) ? rank : seriesCount + 1;
+    }
+    participants.forEach(name=>{
+        if(!results[name]) results[name] = Array(heats.length - 1).fill(seriesCount + 1);
+        results[name].push(heatPoints[name] ?? seriesCount + 1);
+    });
+}
+
+// --- カット計算 ---
+function getCutCount(heatCount){
+    let count = 0;
+    for(let key of Object.keys(cutSettings).sort((a,b)=>a-b)){
+        if(heatCount >= key) count = cutSettings[key];
+    }
+    return count;
+}
+
+// --- 集計 ---
+function calculateNetPoints(){
+    let netResults = {};
+    for(let name of participants){
+        let points = results[name].slice();
+        let cutCount = getCutCount(points.length);
+        let cuts = [];
+        if(cutCount > 0){
+            let sorted = points.map((p,i)=>({p,i})).sort((a,b)=>b.p - a.p);
+            cuts = sorted.slice(0,cutCount).map(c=>c.p);
+        }
+        let total = points.reduce((a,b)=>a+b,0);
+        let net = total - cuts.reduce((a,b)=>a+b,0);
+        netResults[name] = {points, cuts, net, total};
+    }
+    let sortedNames = participants.slice().sort((a,b)=>netResults[a].net - netResults[b].net);
+    let rank = 1, finalResults = {};
+    sortedNames.forEach(name=>finalResults[name]={...netResults[name],rank:rank++});
+    return finalResults;
+}
+
+// --- 表更新（ヒート削除対応） ---
+function updateTable(){
+    cutSettings = {};
+    const c1 = parseInt(document.getElementById('cut1Heat').value);
+    const c2 = parseInt(document.getElementById('cut2Heat').value);
+    if(!isNaN(c1)) cutSettings[c1] = 1;
+    if(!isNaN(c2)) cutSettings[c2] = 2;
+
+    const finalResults = calculateNetPoints();
+    let html = "<table id='resultsTable'><tr>";
+    html += "<th>順位</th><th>選手名</th>";
+    heats.forEach((h,idx)=>html += `<th onclick='deleteHeat(${idx})' title='クリックで削除'>${h}</th>`);
+    html += "<th>カット前合計</th>";
+    const maxCut = Math.max(...Object.values(cutSettings),0);
+    for(let i=1;i<=maxCut;i++) html += `<th>カット${i}</th>`;
+    html += "<th>Net</th></tr>";
+
+    for(let name of participants){
+        const r = finalResults[name];
+        html += `<tr><td>${r.rank}</td><td>${name}</td>`;
+        r.points.forEach(p=>html += `<td>${p === seriesCount + 1 ? "<span class='dns'>"+p+"</span>":p}</td>`);
+        html += `<td>${r.total}</td>`;
+        for(let i=0;i<maxCut;i++) html += `<td>${r.cuts[i]? "<span class='cut'>"+r.cuts[i]+"</span>":""}</td>`;
+        html += `<td>${r.net}</td></tr>`;
+    }
+    document.getElementById('tableContainer').innerHTML = "<div class='table-wrapper'>"+html+"</div>";
+}
+
+// --- ヒート削除 ---
+function deleteHeat(index){
+    if(!confirm(`${heats[index]} を削除しますか？`)) return;
+    heats.splice(index,1);
+    for(let name of participants){ results[name].splice(index,1); }
+    updateTable();
+}
+
+// --- CSV出力 ---
+function downloadCSV(){
+    const finalResults = calculateNetPoints();
+    let csv = "順位,選手名,"+heats.join(",")+",カット前合計,Net\n";
+    for(let name of participants){
+        const r = finalResults[name];
+        csv += `${r.rank},${name},${r.points.join(",")},${r.total},${r.net}\n`;
+    }
+    const blob = new Blob([csv], {type:'text/csv'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = "総合結果_v3.3.2.csv";
+    a.click();
+}
+</script>
+
+</body>
+</html>
