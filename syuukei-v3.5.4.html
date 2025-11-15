@@ -91,6 +91,7 @@
 <!-- 参加者CSV読み取り -->
 <button id="loadParticipantBtn">参加選手リストの読取</button>
 <span id="participantFileName">未選択</span>
+
 <input type="file" id="participantCSV" accept=".csv">
 
 <br><br>
@@ -98,10 +99,13 @@
 <button id="csvFileBtn">ヒート結果を読取</button>
 <input type="file" id="csvFile" accept=".csv">
 <span id="heatFileName">未選択</span>
+<BR>（読取後、↓のヒート追加ボタンで集計表に反映)
 <br><br>
+
 
 <button id="handleCSVBtn" onclick="handleCSV()">ヒート追加（CSV）</button>
 <button id="manualHeatBtn" onclick="openManualHeat()">ヒート手入力</button>
+<BR>(確定ボタンで集計表に反映)
 <button id="downloadCSVBtn" onclick="downloadCSV()">総合結果をCSV出力</button>
 <button id="recalcBtn" onclick="updateTable()">再計算</button>
 
