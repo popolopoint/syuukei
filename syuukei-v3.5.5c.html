@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>集計ちゃん by Popolo v3.5.5c</title>
+<style>
+  body { font-family: sans-serif; padding: 20px; }
+  .table-wrapper { overflow-x: auto; }
+  table { border-collapse: collapse; table-layout: fixed; width: max-content; }
+  th, td { border: 1px solid #999; padding: 5px 10px; text-align: center; white-space: nowrap; width: 80px; }
+  th { background-color: #eee; cursor: pointer; }
+  .dns { color: red; font-weight: bold; }
+  .cut { color: blue; font-weight: bold; }
+  button { font-size: 1.2em; padding: 14px 24px; margin: 5px 5px; min-width: 140px; cursor: pointer; border-radius: 6px; border: 1px solid #666; background-color: #f0f0f0; }
+  button:active { background-color: #ddd; }
+  select, input[type="text"], input[type="number"] { font-size: 1.1em; padding: 10px; min-width: 140px; margin: 5px 5px; border-radius: 5px; border: 1px solid #999; box-sizing: border-box; }
+  input[type="file"] { display: none; }
+  #handleCSVBtn { background-color: #4CAF50; color: white; }
+  #downloadCSVBtn { background-color: #2196F3; color: white; }
+  #recalcBtn { background-color: #FF9800; color: white; }
+  #manualHeatBtn { background-color: #9C27B0; color: white; }
+  #manualHeatModal { display:none; position:fixed; top:10%; left:50%; transform:translateX(-50%); border:1px solid #999; padding:10px; background:#fff; z-index:1000; max-height:80%; overflow-y:auto; }
+  #manualHeatInputs div { margin-bottom:5px; }
+</style>
+</head>
+<body>
+
+<h2>集計ちゃん <span style="font-size:0.7em;">by Popolo v3.5.5c</span></h2>
+
+<label>種目:
+  <select id="discipline">
+    <option value="wind">ウインドサーフィン</option>
+    <option value="yacht">ウイングフォイル/ヨット</option>
+  </select>
+</label>
+<br><br>
+
+<label>カット設定（ヒート数を入力）:</label><br>
+1カットヒート: <input type="number" id="cut1Heat" placeholder="例: 4" style="width:80px; text-align:center;">
+2カットヒート: <input type="number" id="cut2Heat" placeholder="例: 8" style="width:80px; text-align:center;">
+<br><br>
+
+<label>参加選手番号（カンマ区切り）:</label>
+<input type="text" id="participantList" placeholder="001,002,003,004">
+<span id="participantCount" style="margin-left:10px;">0名</span>
+<br>
+
+<button id="loadParticipantBtn">参加選手リストの読取</button>
+<span id="participantFileName">未選択</span>
+<input type="file" id="participantCSV" accept=".csv">
+<br><br>
+
+<button id="csvFileBtn">ヒート結果を読取</button>
+<input type="file" id="csvFile" accept=".csv">
+<span id="heatFileName">未選択</span>
+<br>（読取後、↓のヒート追加ボタンで集計表に反映）
+<br><br>
+
+<button id="handleCSVBtn" onclick="handleCSV()">ヒート追加（CSV）</button>
+<button id="manualHeatBtn" onclick="openManualHeat()">ヒート手入力</button>
+<br>(確定ボタンで集計表に反映)
+<br><br>
+
+<label>結果名（ファイル名に使用）:</label>
+<input type="text" id="resultName" placeholder="例: 〇〇大会" style="width:200px;">
+<br><br>
+<button id="downloadCSVBtn" onclick="downloadCSV()">総合結果をCSV出力</button>
+<button id="recalcBtn" onclick="updateTable()">再計算</button>
+
+<div id="tableContainer"></div>
+
+<div id="manualHeatModal">
+    <h3>手入力ヒート（順位→番号入力）</h3>
+    <div id="manualHeatInputs"></div>
+    <button id="manualAddBtn">追加</button>
+    <button onclick="submitManualHeat()">確定</button>
+    <button onclick="closeManualHeatModal()">キャンセル</button>
+</div>
+
+<script>
+let results = {};
+let heats = [];
+let cutSettings = {};
+let participants = [];
+let seriesCount = 0;
+let displayOrder = [];
+let currentSortAsc = true;
+
+// 参加者リスト反映
+function applyParticipantsFromInput(){
+    const participantText = document.getElementById('participantList').value.trim();
+    if(!participantText){ participants=[]; displayOrder=[]; seriesCount=0; document.getElementById('participantCount').textContent=`0名`; updateTable(); return; }
+    const updated = participantText.split(',').map(s=>s.trim()).filter(s=>s!=='');
+    const newSeriesCount = updated.length;
+    const existingHeatCount = heats.length;
+    updated.forEach(id=>{
+        if(!results[id]) results[id] = Array(existingHeatCount).fill(newSeriesCount+1);
+        else while(results[id].length < existingHeatCount) results[id].push(newSeriesCount+1);
+    });
+    participants = updated.slice();
+    displayOrder = participants.slice();
+    seriesCount = newSeriesCount;
+    document.getElementById('participantCount').textContent = `${participants.length}名`;
+    updateTable();
+}
+
+// 参加者CSV
+document.getElementById('loadParticipantBtn').addEventListener('click',()=>{ document.getElementById('participantCSV').click(); });
+document.getElementById('participantCSV').addEventListener('change',(ev)=>{
+    const file = ev.target.files[0];
+    if(!file){ alert('CSVを選択してください'); return; }
+    document.getElementById('participantFileName').textContent = file.name;
+    const reader = new FileReader();
+    reader.onload=function(e){
+        const lines = e.target.result.split(/\r?\n/).map(l=>l.trim()).filter(l=>l!=='');
+        if(lines.length<2){ alert('CSVの内容が不十分です'); return; }
+        const arr = [];
+        for(let i=1;i<lines.length;i++){ const cols=lines[i].split(','); if(cols[0]) arr.push(cols[0].trim()); }
+        document.getElementById('participantList').value = arr.join(',');
+        applyParticipantsFromInput();
+    };
+    reader.readAsText(file,'utf-8');
+    ev.target.value='';
+});
+document.getElementById('participantList').addEventListener('blur',applyParticipantsFromInput);
+document.getElementById('participantList').addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); applyParticipantsFromInput(); e.target.blur(); }});
+
+// ヒートCSV選択
+document.getElementById('csvFileBtn').addEventListener('click',()=>{ document.getElementById('csvFile').click(); });
+document.getElementById('csvFile').addEventListener('change', (ev)=>{
+    document.getElementById('heatFileName').textContent = ev.target.files.length>0?ev.target.files[0].name:"未選択";
+});
+
+// CSV処理
+function handleCSV(){
+    const fileInput=document.getElementById('csvFile');
+    if(!fileInput.files.length){ alert('CSVを選択してください'); return; }
+    applyParticipantsFromInput();
+    if(participants.length===0){ alert('参加選手番号を入力してください'); return; }
+    const reader=new FileReader();
+    reader.onload=function(e){ parseCSV(e.target.result); updateTable(); };
+    reader.readAsText(fileInput.files[0],'utf-8');
+    fileInput.value='';
+}
+function parseCSV(text){
+    const lines=text.trim().split(/\r?\n/);
+    if(lines.length<2) return;
+    const heatName="Heat"+(heats.length+1);
+    heats.push(heatName);
+    const heatPoints={};
+    for(let i=1;i<lines.length;i++){
+        const cols=lines[i].split(',');
+        if(cols.length<3) continue;
+        const rank=parseInt(cols[1].trim(),10);
+        const colorNumber=cols[2].trim();
+        if(!participants.includes(colorNumber)) continue;
+        heatPoints[colorNumber]=!isNaN(rank)?rank:(seriesCount+1);
+    }
+    participants.forEach(name=>{
+        if(!results[name]) results[name]=Array(heats.length-1).fill(seriesCount+1);
+        results[name].push(heatPoints[name]!==undefined?heatPoints[name]:(seriesCount+1));
+    });
+}
+
+// 手入力ヒート
+let manualNextRank=1;
+function openManualHeat(){
+    applyParticipantsFromInput();
+    if(participants.length===0){ alert('参加者リストが空です'); return; }
+    manualNextRank=1;
+    const container=document.getElementById('manualHeatInputs');
+    container.innerHTML='';
+    addManualRankInput();
+    document.getElementById('manualHeatModal').style.display='block';
+}
+function addManualRankInput(){
+    const container=document.getElementById('manualHeatInputs');
+    const div=document.createElement('div');
+    div.innerHTML=`${manualNextRank}位: <input type="text" class="manualRankInput" placeholder="選手番号">`;
+    container.appendChild(div);
+    const input=div.querySelector('input');
+    input.focus();
+    input.addEventListener('keydown',e=>{
+        if(e.key==='Enter'){ e.preventDefault(); if(input.value.trim()!==''){ addManualRankInput(); } }
+    });
+    manualNextRank++;
+}
+document.getElementById('manualAddBtn').addEventListener('click',addManualRankInput);
+function submitManualHeat(){
+    const inputs=Array.from(document.querySelectorAll('.manualRankInput'));
+    if(inputs.length===0) return;
+    const heatName="Heat"+(heats.length+1);
+    heats.push(heatName);
+    const heatPoints={};
+    participants.forEach(p=>{ if(!results[p]) results[p]=Array(heats.length-1).fill(seriesCount+1); while(results[p].length<heats.length-1) results[p].push(seriesCount+1); });
+    inputs.forEach((input,idx)=>{ const val=input.value.trim(); if(val && participants.includes(val)) heatPoints[val]=idx+1; });
+    participants.forEach(p=>{ results[p].push(heatPoints[p]!==undefined?heatPoints[p]:(seriesCount+1)); });
+    updateTable(); closeManualHeatModal();
+}
+function closeManualHeatModal(){ document.getElementById('manualHeatModal').style.display='none'; }
+
+// ネットポイント計算
+function getCutCount(heatCount){
+    let count=0;
+    for(let key of Object.keys(cutSettings).sort((a,b)=>a-b)){
+        if(heatCount>=key) count=cutSettings[key];
+    }
+    return count;
+}
+function calculateNetPoints(){
+    let netResults={};
+    const discipline=document.getElementById('discipline').value;
+    for(let name of participants){
+        let points=(results[name]||[]).slice();
+        let cutCount=getCutCount(points.length);
+        let sortedForCut=points.map((p,i)=>({p,i})).sort((a,b)=>b.p-b.p?b.p-a.p:b.i-a.i);
+        let cuts=[], keptPoints=[], cutIndices=new Set();
+        if(cutCount>0){ for(let i=0;i<cutCount;i++){ if(sortedForCut[i]) cutIndices.add(sortedForCut[i].i); } }
+        let totalPoints=0;
+        for(let i=0;i<points.length;i++){ totalPoints+=points[i]; if(cutIndices.has(i)) cuts.push(points[i]); else keptPoints.push(points[i]); }
+        let netPoints=totalPoints-cuts.reduce((a,b)=>a+b,0);
+        keptPoints.sort((a,b)=>a-b);
+        netResults[name]={points,cuts:cuts.sort((a,b)=>b-a),net:netPoints,total:totalPoints,keptPoints};
+    }
+    return netResults;
+}
+
+// 表更新
+function updateTable(){
+    cutSettings={};
+    const cut1=parseInt(document.getElementById('cut1Heat').value);
+    const cut2=parseInt(document.getElementById('cut2Heat').value);
+    if(!isNaN(cut1)) cutSettings[cut1]=1;
+    if(!isNaN(cut2)) cutSettings[cut2]=2;
+    const netResults=calculateNetPoints();
+    let html="<table id='resultsTable'><tr><th onclick='sortTableByColumn(0)'>順位</th><th>選手名</th>";
+    heats.forEach((h,i)=> html+=`<th onclick="deleteHeat(${i})">${h}</th>`);
+    html+="<th>カット前合計</th>";
+    let maxCut=Math.max(...Object.values(cutSettings),0);
+    for(let i=1;i<=maxCut;i++) html+=`<th>カット${i}</th>`;
+    html+="<th>Net</th></tr>";
+    displayOrder.forEach((name,index)=>{
+        const r=netResults[name]||{points:[],total:0,cuts:[],net:0};
+        html+=`<tr><td>${index+1}</td><td>${name}</td>`;
+        r.points.forEach(p=>{ html+=`<td>${p===seriesCount+1?'<span class="dns">'+p+'</span>':p}</td>`; });
+        html+=`<td>${r.total}</td>`;
+        for(let i=0;i<maxCut;i++){ html+=`<td>${r.cuts[i]!==undefined?'<span class="cut">'+r.cuts[i]+'</span>':''}</td>`; }
+        html+=`<td>${r.net}</td></tr>`;
+    });
+    document.getElementById('tableContainer').innerHTML="<div class='table-wrapper'>"+html+"</div>";
+}
+
+// ヒート削除
+function deleteHeat(index){
+    if(!confirm(`"${heats[index]}" を削除しますか？`)) return;
+    heats.splice(index,1);
+    for(const name in results){ if(results[name] && results[name].length>index) results[name].splice(index,1); }
+    updateTable();
+}
+
+// CSV出力（スマホ対応）
+
+
+function downloadCSV() {
+    const netResults = calculateNetPoints();
+    let csv = "順位,選手名,カット前合計," + heats.join(",") + ",カット,Net\n";
+    displayOrder.forEach((name, index) => {
+        const r = netResults[name];
+        csv += `${index+1},${name},${r.total},${r.points.join(",")},(${r.cuts.join(',')}),${r.net}\n`;
+    });
+
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+
+    const resultName = document.getElementById('resultName').value.trim();
+    const safeName = resultName.replace(/[\s\/\\,]/g, '_');
+    const fileName = safeName ? safeName + "_総合結果.csv" : "総合結果.csv";
+
+    const a = document.createElement('a');
+    a.href = url;
+    a.setAttribute('download', fileName);
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+}
+
+
+
+
+
+
+
+
+
+
+// 初期化
+applyParticipantsFromInput();
+updateTable();
+</script>
+</body>
+</html>
