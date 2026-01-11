@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>集計ちゃん by Popolo v3.6.6c</title>
+
+<style>
+  body { font-family: sans-serif; padding: 20px; }
+  .table-wrapper { overflow-x: auto; }
+
+  table { 
+    border-collapse: collapse; 
+    table-layout: fixed;
+    width: max-content;
+  }
+
+  th, td { 
+    border: 1px solid #999; 
+    padding: 5px 10px; 
+    text-align: center; 
+    white-space: nowrap; 
+    width: 80px; 
+  }
+
+  th { background-color: #eee; cursor: pointer; }
+
+  .dns { color: red; font-weight: bold; }
+  .cut { color: blue; font-weight: bold; }
+
+  button {
+    font-size: 1.2em;
+    padding: 14px 24px;
+    margin: 5px;
+    min-width: 140px;
+    cursor: pointer;
+    border-radius: 6px;
+    border: 1px solid #666;
+    background-color: #f0f0f0;
+  }
+
+  select, input[type="text"], input[type="number"] {
+    font-size: 1.1em;
+    padding: 10px;
+    min-width: 140px;
+    margin: 5px;
+    border-radius: 5px;
+    border: 1px solid #999;
+  }
+
+  input[type="file"] { display: none; }
+
+  #handleCSVBtn { background:#4CAF50; color:white; }
+  #downloadCSVBtn { background:#2196F3; color:white; }
+  #recalcBtn { background:#FF9800; color:white; }
+  #manualHeatBtn { background:#9C27B0; color:white; }
+
+  /* モーダル共通 */
+  .modal {
+    display:none;
+    position:fixed;
+    top:15%;
+    left:50%;
+    transform:translateX(-50%);
+    border:1px solid #999;
+    padding:20px;
+    background:#fff;
+    z-index:3000;
+    width:320px;
+    max-height:80vh;
+    overflow-y:auto;
+    box-shadow:0 4px 8px rgba(0,0,0,0.2);
+  }
+</style>
+</head>
+
+<body>
+
+<h2>集計ちゃん <span style="font-size:0.7em;">by Popolo v3.6.6c</span></h2>
+
+<label>種目:
+  <select id="discipline">
+    <option value="wind">ウインドサーフィン</option>
+    <option value="yacht">ウイングフォイル / ヨット</option>
+  </select>
+</label>
+<br>
+
+<!-- ★ タイの解き方ボタン -->
+<button onclick="openTieBreakModal()" style="background:#455A64; color:white;">
+  タイの解き方
+</button>
+
+<br><br>
+
+<label>カット設定（ヒート数を入力）:</label><br>
+1カットヒート:
+<input type="number" id="cut1Heat" value="4" style="width:80px; text-align:center;"><br>
+2カットヒート:
+<input type="number" id="cut2Heat" value="7" style="width:80px; text-align:center;">
+
+<br><br>
+
+<label>参加選手番号（カンマ区切り）:</label><br>
+<input type="text" id="participantList" placeholder="001,002,003">
+<span id="participantCount">0名</span>
+
+<br><br>
+
+<button id="csvFileBtn">ヒート結果を読取</button>
+<input type="file" id="csvFile" accept=".csv">
+<span id="heatFileName">未選択</span>
+
+<br><br>
+
+<button id="handleCSVBtn" onclick="handleCSV()">ヒート追加（CSV）</button>
+<button id="manualHeatBtn" onclick="openManualHeat()">ヒート手入力</button>
+
+<br><br>
+
+<label>結果名（ファイル名用）:</label><br>
+<input type="text" id="resultName" style="width:200px;">
+
+<br><br>
+
+<button id="downloadCSVBtn" onclick="downloadCSV()">結果CSV出力</button>
+<button id="recalcBtn" onclick="updateTable()">再計算</button>
+
+<div id="tableContainer"></div>
+
+<!-- ===== タイブレーク説明モーダル ===== -->
+<div id="tieBreakModal" class="modal">
+  <h3>タイの解き方</h3>
+
+  <p><strong>RRS付則A（ヨット・ウイング）</strong><br>
+  → カットを含まない得点を良順に比較<br>
+  → カットを含め、最終レースから逆順に比較
+  </p>
+
+  <p><strong>付則B（ウインドサーフィン）</strong><br>
+  → カットされた得点を比較<br>
+  → カットを含む得点を良順に比較<br>
+  → カットを含め、最終レースから逆順に比較
+  </p>
+
+  <button onclick="closeTieBreakModal()">閉じる</button>
+</div>
+
+<!-- ===== 手入力ヒートモーダル ===== -->
+<div id="manualHeatModal" class="modal">
+  <h3>手入力ヒート（順位 → 番号）</h3>
+  <div id="manualHeatInputs"></div>
+  <button onclick="addManualRankInput()">追加</button>
+  <button onclick="submitManualHeat()">確定</button>
+  <button onclick="closeManualHeatModal()">キャンセル</button>
+</div>
+
+<script>
+let results = {};
+let heats = [];
+let participants = [];
+let displayOrder = [];
+let cutSettings = {};
+let seriesCount = 0;
+let currentSortAsc = true;
+
+/* ===== タイブレークモーダル ===== */
+function openTieBreakModal(){
+  document.getElementById('tieBreakModal').style.display = 'block';
+}
+function closeTieBreakModal(){
+  document.getElementById('tieBreakModal').style.display = 'none';
+}
+
+/* ===== 参加者処理 ===== */
+function applyParticipantsFromInput(){
+  const txt = document.getElementById('participantList').value.trim();
+  participants = txt ? txt.split(',').map(v=>v.trim()) : [];
+  displayOrder = participants.slice();
+  seriesCount = participants.length;
+  document.getElementById('participantCount').textContent = `${seriesCount}名`;
+}
+
+/* ===== CSV読み込み ===== */
+document.getElementById('csvFileBtn').onclick = () =>
+  document.getElementById('csvFile').click();
+
+function handleCSV(){
+  applyParticipantsFromInput();
+  if(!participants.length) return alert('参加者を入力してください');
+
+  const f = document.getElementById('csvFile');
+  if(!f.files.length) return alert('CSVを選択してください');
+
+  const r = new FileReader();
+  r.onload = e => { parseCSV(e.target.result); updateTable(); };
+  r.readAsText(f.files[0],'utf-8');
+  f.value = '';
+}
+
+function parseCSV(text){
+  const lines = text.trim().split(/\r?\n/);
+  heats.push("Heat"+heats.length+1);
+  const points = {};
+
+  for(let i=1;i<lines.length;i++){
+    const c = lines[i].split(',');
+    const rank = parseInt(c[1],10);
+    const no = c[2]?.trim();
+    if(participants.includes(no)) points[no] = rank;
+  }
+
+  participants.forEach(p=>{
+    if(!results[p]) results[p]=[];
+    results[p].push(points[p] ?? seriesCount+1);
+  });
+}
+
+/* ===== ネット計算 ===== */
+function calculateNetPoints(){
+  const net={};
+  participants.forEach(p=>{
+    const pts = results[p]||[];
+    const total = pts.reduce((a,b)=>a+b,0);
+    net[p]={points:pts,total,net:total};
+  });
+  return net;
+}
+
+/* ===== 表更新 ===== */
+function updateTable(){
+  const net = calculateNetPoints();
+  let html="<table><tr><th>順位</th><th>No.</th>";
+  heats.forEach(h=>html+=`<th>${h}</th>`);
+  html+="<th>total</th></tr>";
+
+  displayOrder.forEach((p,i)=>{
+    html+=`<tr><td>${i+1}</td><td>${p}</td>`;
+    net[p].points.forEach(v=>html+=`<td>${v}</td>`);
+    html+=`<td>${net[p].total}</td></tr>`;
+  });
+
+  document.getElementById('tableContainer').innerHTML =
+    `<div class="table-wrapper">${html}</div>`;
+}
+
+/* ===== CSV出力 ===== */
+function downloadCSV(){
+  const net = calculateNetPoints();
+  let csv=",順位,No.,"+heats.join(",")+",total\n";
+  displayOrder.forEach((p,i)=>{
+    csv+=`,${i+1},${p},${net[p].points.join(",")},${net[p].total}\n`;
+  });
+  const blob=new Blob([csv],{type:'text/csv'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download="結果.csv";
+  a.click();
+}
+</script>
+
+</body>
+</html>
