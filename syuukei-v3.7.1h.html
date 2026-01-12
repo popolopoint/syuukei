@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>集計ちゃん by Popolo v3.7.1h</title>
+<style>
+  body { font-family: sans-serif; padding: 15px; line-height: 1.4; background-color: #f9f9f9; color: #333; }
+  .table-wrapper { overflow-x: auto; margin-top: 20px; background: white; border: 1px solid #999; -webkit-overflow-scrolling: touch; }
+  table { border-collapse: collapse; table-layout: fixed; width: max-content; }
+  th, td { border: 1px solid #999; padding: 10px 8px; text-align: center; white-space: nowrap; width: 90px; }
+  th { background-color: #eee; position: sticky; top: 0; z-index: 10; }
+  .dns { color: red; font-weight: bold; }
+  .cut { color: blue; text-decoration: line-through; opacity: 0.5; }
+
+  button {
+      font-size: 1.0em; padding: 12px 15px; margin: 5px 2px;
+      min-width: 120px; cursor: pointer; border-radius: 8px;
+      border: 1px solid #666; background-color: #f0f0f0;
+      touch-action: manipulation;
+  }
+  textarea, input[type="text"], input[type="number"] { font-size: 16px !important; }
+  #manualPartBtn { background-color: #f44336; color: white; border: none; width: 100%; max-width: 300px; }
+  #recalcBtn { background-color: #FF9800; color: white; border: none; width: 100%; max-width: 300px; font-weight: bold; }
+  
+  .modal {
+      display:none; position:fixed; top:5%; left:50%; transform:translateX(-50%);
+      border:1px solid #999; padding:20px; background:#fff; z-index: 2000;
+      width: 85%; max-width: 400px; max-height: 85vh; overflow-y: auto; box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+      border-radius: 12px;
+  }
+  .rank-row { margin-bottom: 10px; display: flex; align-items: center; }
+</style>
+</head>
+<body>
+
+<h3>集計ちゃん <span style="font-size:0.7em;">v3.7.1h</span></h3>
+
+<div>
+  <label>種目: 
+    <select id="discipline">
+      <option value="wind">ウインドサーフィン</option>
+      <option value="yacht">ウイングフォイル/ヨット</option>
+    </select>
+  </label>
+  <button onclick="document.getElementById('tieBreakModal').style.display='block'" style="min-width:auto; padding:5px 10px;">タイの解き方</button>
+</div>
+
+<div style="background:#eee; padding:10px; border-radius:8px; margin-top:10px;">
+  <label>カット設定:</label><br>
+  1枚: <input type="number" id="cut1Heat" value="4" style="width:50px;"> 2枚: <input type="number" id="cut2Heat" value="7" style="width:50px;">
+</div>
+
+<br>
+<button id="manualPartBtn" onclick="openPartModal()">選手入力、文字も入力</button>
+<br>
+<input type="text" id="participantList" placeholder="001 Name, 002 Name" style="width: 100%;">
+<div id="participantCount" style="font-weight:bold; margin:5px 0; color:#2196F3;">0名 登録中</div>
+<button id="recalcBtn" onclick="applyParticipantsFromInput()">表を更新・再計算</button>
+
+<hr>
+<button onclick="document.getElementById('csvFile').click()">ヒートCSV読取</button>
+<input type="file" id="csvFile" accept=".csv" style="display:none;" onchange="handleCSV()">
+<button id="manualHeatBtn" onclick="openManualHeat()" style="background-color: #9C27B0; color:white; border:none;">ヒート手入力</button>
+
+<br>
+<input type="text" id="resultName" placeholder="大会名" style="width:60%;">
+<button onclick="downloadCSV()" style="min-width:auto; background-color:#2196F3; color:white; border:none;">CSV保存</button>
+
+<div id="tableContainer"></div>
+
+<div id="partModal" class="modal">
+    <h3>選手入力、文字も入力</h3>
+    <textarea id="partTextArea" style="width:100%; height:200px;" placeholder="001 Taro&#13;&#10;002 Hanako"></textarea>
+    <button onclick="submitPartModal()" style="width:100%; background:#4CAF50; color:white; padding:15px;">反映する</button>
+    <button style="width:100%; margin-top:10px;" onclick="closePartModal()">閉じる</button>
+</div>
+
+<div id="manualHeatModal" class="modal">
+    <h3 id="manualHeatModalTitle">順位入力</h3>
+    <div id="manualHeatInputs"></div>
+    <button id="manualAddBtn" onclick="addRankInput()" style="width:100%; background:#eee; border:1px dashed #999; margin-top:5px;">+ 順位を追加</button>
+    <button onclick="submitManualHeat()" style="width:100%; background:#4CAF50; color:white; margin-top:15px; padding:15px; border:none;">確定保存</button>
+    <button style="width:100%; margin-top:10px;" onclick="closeManualHeatModal()">キャンセル</button>
+</div>
+
+<div id="heatActionModal" class="modal">
+    <h3 id="heatActionTitle">操作</h3>
+    <button style="width:100%; background:#4CAF50; color:white; padding:15px;" onclick="startHeatEdit()">修正する</button>
+    <button style="width:100%; background:#f44336; color:white; padding:15px; margin-top:10px;" onclick="confirmDeleteHeat()">削除する</button>
+    <button style="width:100%; margin-top:15px;" onclick="closeHeatActionModal()">キャンセル</button>
+</div>
+
+<div id="tieBreakModal" class="modal">
+    <h3>タイの解き方</h3>
+    <p>付則A: カットなし得点比較 → 最終逆順</p>
+    <p>付則B: カット得点比較 → 良順比較 → 最終逆順</p>
+    <button onclick="this.parentElement.style.display='none'" style="width:100%;">閉じる</button>
+</div>
+
+<script>
+let results = {}; let participants = []; let heats = []; let displayOrder = [];
+let targetHeatIndex = -1; let isEditMode = false; let currentSortAsc = true;
+
+function openPartModal() {
+    const list = document.getElementById('participantList').value;
+    document.getElementById('partTextArea').value = list.split(',').map(s=>s.trim()).filter(s=>s).join('\n');
+    document.getElementById('partModal').style.display = 'block';
+}
+function closePartModal() { document.getElementById('partModal').style.display = 'none'; }
+function submitPartModal() {
+    const text = document.getElementById('partTextArea').value;
+    document.getElementById('participantList').value = text.split('\n').filter(s=>s.trim()!=='').join(', ');
+    applyParticipantsFromInput();
+    closePartModal();
+}
+
+function applyParticipantsFromInput(){
+    const text = document.getElementById('participantList').value.trim();
+    if(!text) { participants=[]; displayOrder=[]; updateTable(); return; }
+    const rawList = text.split(',').map(s=>s.trim()).filter(s=>s!=='');
+    const updated = rawList.map(item => {
+        const firstSpace = item.search(/\s/);
+        const no = (firstSpace === -1) ? item : item.substring(0, firstSpace).trim();
+        return { no: no, fullName: item.trim() };
+    });
+    const dns = updated.length + 1;
+    updated.forEach(p => { if(!results[p.no]) results[p.no] = Array(heats.length).fill(dns); });
+    participants = updated; displayOrder = [...participants];
+    document.getElementById('participantCount').textContent = `${participants.length}名 登録中`;
+    updateTable();
+}
+
+function openManualHeat(){
+    const container = document.getElementById('manualHeatInputs');
+    container.innerHTML = ''; 
+    if(isEditMode) {
+        let entries = participants.map(p => ({no: p.no, r: results[p.no][targetHeatIndex]}))
+                                  .filter(e => e.r <= participants.length).sort((a,b)=>a.r-b.r);
+        if(entries.length > 0) { entries.forEach(e => addRankInput(e.no)); } 
+        else { addRankInput(); }
+    } else {
+        addRankInput(); 
+    }
+    document.getElementById('manualHeatModal').style.display = 'block';
+}
+
+function addRankInput(pNo = ""){
+    const container = document.getElementById('manualHeatInputs');
+    const rank = container.querySelectorAll('.rank-row').length + 1;
+    const div = document.createElement('div');
+    div.className = 'rank-row';
+    div.innerHTML = `<span style="width:50px; font-weight:bold;">${rank}位:</span> 
+                     <input type="text" class="mRankInput" value="${pNo}" 
+                            style="width:120px; padding:8px;" 
+                            inputmode="numeric" 
+                            onkeydown="handleRankKeydown(event, this)">`;
+    container.appendChild(div);
+    div.querySelector('input').focus();
+}
+
+function handleRankKeydown(e, currentInput) {
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        const inputs = document.querySelectorAll('.mRankInput');
+        const index = Array.from(inputs).indexOf(currentInput);
+        if (index === inputs.length - 1) { addRankInput(); } 
+        else { inputs[index + 1].focus(); }
+    }
+}
+
+function submitManualHeat(){
+    // 全ての入力値を取得し、空欄を除外
+    const inputElements = document.querySelectorAll('.mRankInput');
+    const inputValues = Array.from(inputElements)
+                            .map(inp => inp.value.trim())
+                            .filter(val => val !== ""); // ここで空欄を完全に消去
+
+    const pts = {};
+    inputValues.forEach((val, index) => {
+        pts[val] = index + 1; // 上から順に 1, 2, 3... と順位を振る
+    });
+
+    const dns = participants.length + 1;
+    if(isEditMode){ 
+        participants.forEach(p => { results[p.no][targetHeatIndex] = pts[p.no] || dns; }); 
+    } else { 
+        heats.push("H" + (heats.length + 1)); 
+        participants.forEach(p => { 
+            if(!results[p.no]) results[p.no] = Array(heats.length - 1).fill(dns);
+            results[p.no].push(pts[p.no] || dns); 
+        }); 
+    }
+    updateTable(); 
+    closeManualHeatModal();
+}
+
+function closeManualHeatModal(){ document.getElementById('manualHeatModal').style.display='none'; isEditMode=false; }
+
+function updateTable(){
+    const c1 = parseInt(document.getElementById('cut1Heat').value) || 99;
+    const c2 = parseInt(document.getElementById('cut2Heat').value) || 99;
+    const dns = participants.length + 1;
+    let netRes = {};
+
+    participants.forEach(p => {
+        let pts = (results[p.no] || []).map(v => (v >= participants.length) ? dns : v);
+        results[p.no] = pts;
+        let sorted = [...pts].sort((a,b)=>b-a);
+        let cutCount = (pts.length >= c2) ? 2 : (pts.length >= c1 ? 1 : 0);
+        let tempCuts = [...sorted.slice(0, cutCount)];
+        let net = pts.reduce((a,b)=>a+b, 0) - tempCuts.reduce((a,b)=>a+b, 0);
+        netRes[p.no] = { pts, net, cutVals: tempCuts };
+    });
+
+    let html = `<table><tr><th onclick="sortNet()">順位</th><th>No.</th><th>Name</th>`;
+    heats.forEach((h, i) => html += `<th onclick="openHeatActionModal(${i})">${h}</th>`);
+    html += `<th>Net</th></tr>`;
+
+    displayOrder.forEach((p, idx) => {
+        const r = netRes[p.no]; if(!r) return;
+        let pName = p.fullName.replace(p.no,'').trim();
+        html += `<tr><td>${idx+1}</td><td>${p.no}</td><td style="text-align:left; font-size:0.8em;">${pName}</td>`;
+        let currentCuts = [...r.cutVals];
+        r.pts.forEach(pt => {
+            let cutIdx = currentCuts.indexOf(pt);
+            if(cutIdx > -1) {
+                currentCuts.splice(cutIdx, 1);
+                html += `<td class="cut">${pt}</td>`;
+            } else {
+                html += `<td class="${pt>=dns?'dns':''}">${pt}</td>`;
+            }
+        });
+        html += `<td style="font-weight:bold; background:#fff9c4;">${r.net}</td></tr>`;
+    });
+    document.getElementById('tableContainer').innerHTML = `<div class="table-wrapper">${html}</table></div>`;
+}
+
+function openHeatActionModal(i) { targetHeatIndex = i; document.getElementById('heatActionModal').style.display='block'; }
+function closeHeatActionModal() { document.getElementById('heatActionModal').style.display='none'; }
+function startHeatEdit() { isEditMode = true; closeHeatActionModal(); openManualHeat(); }
+function confirmDeleteHeat() {
+    if(confirm(`Heat ${targetHeatIndex+1}を削除しますか？`)) {
+        heats.splice(targetHeatIndex, 1);
+        for(let no in results) results[no].splice(targetHeatIndex, 1);
+        updateTable();
+    }
+    closeHeatActionModal();
+}
+function handleCSV(){
+    const file = document.getElementById('csvFile').files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        const lines = e.target.result.trim().split(/\r?\n/);
+        heats.push("H" + (heats.length + 1));
+        const pts = {};
+        lines.slice(1).forEach(l => { const c = l.split(','); if(c.length>=3) pts[c[2].trim()]=parseInt(c[1]); });
+        participants.forEach(p => { 
+            if(!results[p.no]) results[p.no] = Array(heats.length - 1).fill(participants.length + 1);
+            results[p.no].push(pts[p.no] || (participants.length + 1)); 
+        });
+        updateTable();
+    };
+    reader.readAsText(file);
+    document.getElementById('csvFile').value = "";
+}
+function sortNet() {
+    displayOrder.sort((a, b) => {
+        const getNet = (pNo) => {
+            let p = results[pNo];
+            let sorted = [...p].sort((x,y)=>y-x);
+            let c1 = parseInt(document.getElementById('cut1Heat').value) || 99;
+            let c2 = parseInt(document.getElementById('cut2Heat').value) || 99;
+            let cutCount = (p.length >= c2) ? 2 : (p.length >= c1 ? 1 : 0);
+            return p.reduce((s,v)=>s+v,0) - sorted.slice(0, cutCount).reduce((s,v)=>s+v,0);
+        };
+        return currentSortAsc ? getNet(a.no) - getNet(b.no) : getNet(b.no) - getNet(a.no);
+    });
+    currentSortAsc = !currentSortAsc;
+    updateTable();
+}
+function downloadCSV() {
+    let csv = "Rank,No,Name," + heats.join(",") + ",Net\n";
+    displayOrder.forEach((p, i) => {
+        let pName = p.fullName.replace(p.no,'').trim();
+        csv += `${i+1},${p.no},${pName},${results[p.no].join(",")},${results[p.no].reduce((a,b)=>a+b,0)}\n`;
+    });
+    const blob = new Blob([csv], {type: 'text/csv'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = (document.getElementById('resultName').value || "result") + ".csv";
+    a.click();
+}
+window.onload = applyParticipantsFromInput;
+</script>
+</body>
+</html>
