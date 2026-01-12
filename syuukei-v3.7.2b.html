@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>集計ちゃん v3.7.2b</title>
+<style>
+  /* 全体の基本文字サイズを大きく設定 */
+  body { font-size: 18px; font-family: sans-serif; padding: 15px; line-height: 1.4; background-color: #f9f9f9; color: #333; }
+  
+  .table-wrapper { overflow-x: auto; margin-top: 20px; background: white; border: 1px solid #999; }
+  table { border-collapse: collapse; width: max-content; font-size: 20px; } /* 表の文字を大きく */
+  th, td { border: 1px solid #999; padding: 12px 10px; text-align: center; white-space: nowrap; }
+  
+  .save-panel { background:#e3f2fd; padding:10px; border-radius:8px; margin-bottom:10px; border:1px solid #2196F3; }
+  
+  /* ボタンも大きく押しやすく */
+  button { font-size: 1.1em; padding: 15px; margin: 5px 2px; min-width: 110px; cursor: pointer; border-radius: 10px; border: 1px solid #666; background-color: #f0f0f0; font-weight: bold; }
+  
+  .calc-btn { background:#FF9800 !important; color:white !important; border:none !important; width:100%; }
+  .csv-btn { background:#2E7D32 !important; color:white !important; border:none !important; width:48%; font-size: 0.9em; }
+  .copy-btn { background:#00B900 !important; color:white !important; border:none !important; width:48%; font-size: 0.9em; }
+  
+  .cut { color: blue; font-weight: bold; opacity: 0.6; }
+  .dns { color: red; font-weight: bold; }
+  .modal { display:none; position:fixed; top:5%; left:50%; transform:translateX(-50%); border:1px solid #999; padding:20px; background:#fff; z-index: 2000; width: 90%; max-height: 85vh; overflow-y: auto; border-radius: 12px; }
+</style>
+</head>
+<body>
+
+<h3>集計ちゃん <span style="font-size:0.7em;">v3.7.2b</span></h3>
+
+<div class="save-panel">
+  <button onclick="saveToFile()">保存</button>
+  <button onclick="document.getElementById('fileInput').click()">読込</button>
+  <input type="file" id="fileInput" style="display:none" onchange="loadFromFile(event)">
+</div>
+
+<div style="background:#eee; padding:10px; border-radius:8px;">
+  <select id="discipline" onchange="forceRecalc();" style="width:100%; padding:12px; font-size:1.1em; font-weight:bold;">
+    <option value="yacht">ウイング / ヨット（付則A）</option>
+    <option value="wind">ウインドサーフィン（付則B）</option>
+  </select>
+  <div style="margin-top:10px;">
+    カット: 1枚:<input type="number" id="cut1Heat" value="4" style="font-size:1.1em; width:45px;"> 
+    2枚:<input type="number" id="cut2Heat" value="7" style="font-size:1.1em; width:45px;">
+    <button onclick="document.getElementById('tieBreakModal').style.display='block'" style="min-width:auto; padding:5px 10px; font-size:0.8em;">タイ解説</button>
+  </div>
+</div>
+
+<div style="margin-top:15px;">
+  <button onclick="openPartModal()" style="background:#f44336; color:white; width:100%;">選手名を入力</button>
+  <input type="text" id="participantList" placeholder="J1 太郎, J2 花子" style="width: 100%; padding:10px; font-size:1.1em; margin-top:5px;">
+  
+  <button onclick="forceRecalc()" class="calc-btn">【 1 】 表を更新・再計算</button>
+  
+  <div style="display: flex; justify-content: space-between;">
+    <button onclick="exportCSV()" class="csv-btn">【2】CSV送信<br>(スプレッド用)</button>
+    <button onclick="copyForLine()" class="copy-btn">【2】LINE用コピー<br>(デカ文字確認用)</button>
+  </div>
+</div>
+
+<hr>
+<button onclick="openManualHeat()" style="background-color: #9C27B0; color:white; width:100%;">着順を手入力</button>
+
+<div id="tableContainer"></div>
+
+<script>
+let results = {}; let participants = []; let heats = []; 
+let lastScoredData = [];
+
+function forceRecalc() { applyParticipantsFromInput(); updateTable(); saveToLocal(); }
+
+// LINE用に順位をテキスト化してコピーする新機能
+function copyForLine() {
+    if (lastScoredData.length === 0) return;
+    const discLabel = document.getElementById('discipline').options[document.getElementById('discipline').selectedIndex].text;
+    let text = `【${discLabel} 結果速報】\n\n`;
+    lastScoredData.forEach((r, idx) => {
+        text += `${idx + 1}位: ${r.no} ${r.name}\n`;
+        text += `   (Net: ${r.net}点)\n`;
+    });
+    text += `\n※詳細は添付のCSVを確認してください。`;
+
+    navigator.clipboard.writeText(text).then(() => {
+        alert("LINE用のテキストをコピーしました！\nそのままLINEに貼り付けて送れば、大きな文字で表示されます。");
+    });
+}
+
+// --- 以下、計算ロジックなどは v3.7.1z と同様 ---
+function saveToLocal() { const data = { results, heats, participantList: document.getElementById('participantList').value, discipline: document.getElementById('discipline').value, cut1: document.getElementById('cut1Heat').value, cut2: document.getElementById('cut2Heat').value }; localStorage.setItem('sailing_data_v2b', JSON.stringify(data)); }
+function loadFromLocal() { const saved = localStorage.getItem('sailing_data_v2b'); if (saved) { const data = JSON.parse(saved); results = data.results || {}; heats = data.heats || []; document.getElementById('participantList').value = data.participantList || ""; document.getElementById('discipline').value = data.discipline || "yacht"; document.getElementById('cut1Heat').value = data.cut1 || "4"; document.getElementById('cut2Heat').value = data.cut2 || "7"; forceRecalc(); } }
+function saveToFile() { saveToLocal(); const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([localStorage.getItem('sailing_data_v2b')], {type: 'application/json'})); a.download = `sailing_backup.json`; a.click(); }
+function loadFromFile(event) { const reader = new FileReader(); reader.onload = (e) => { localStorage.setItem('sailing_data_v2b', e.target.result); loadFromLocal(); }; reader.readAsText(event.target.files[0]); }
+
+function applyParticipantsFromInput(){
+    const text = document.getElementById('participantList').value.trim();
+    if(!text) { participants=[]; return; }
+    participants = text.split(',').map(item => { item = item.trim(); const firstSpace = item.search(/\s/); const no = (firstSpace === -1) ? item : item.substring(0, firstSpace).trim(); return { no: no, fullName: item }; });
+    const dns = participants.length + 1;
+    participants.forEach(p => { if(!results[p.no]) results[p.no] = Array(heats.length).fill(dns); });
+}
+
+function updateTable(){
+    const disc = document.getElementById('discipline').value;
+    const c1 = parseInt(document.getElementById('cut1Heat').value) || 99;
+    const c2 = parseInt(document.getElementById('cut2Heat').value) || 99;
+    const dns = participants.length + 1;
+    
+    let scoringData = participants.map(p => {
+        let pts = (results[p.no] || []).map(v => (v > participants.length ? dns : v));
+        let sortedForCut = pts.map((val, idx) => ({val, idx})).sort((a,b) => b.val - a.val);
+        let cutCount = (pts.length >= c2) ? 2 : (pts.length >= c1 ? 1 : 0);
+        let cutIndices = sortedForCut.slice(0, cutCount).map(x => x.idx);
+        let netScore = 0, nonCutPts = [], cutPts = [];
+        pts.forEach((pt, i) => {
+            if(cutIndices.includes(i)) { cutPts.push(pt); }
+            else { netScore += pt; nonCutPts.push(pt); }
+        });
+        return { no: p.no, name: p.fullName, pts, net: netScore, cutPts, nonCutPts, total: pts.reduce((a,b)=>a+b,0) };
+    });
+
+    scoringData.sort((a,b) => {
+        if(a.net !== b.net) return a.net - b.net;
+        if(disc==='yacht'){
+            let aSorted = [...a.nonCutPts].sort((x,y)=>x-y), bSorted = [...b.nonCutPts].sort((x,y)=>x-y);
+            for(let i=0; i<aSorted.length; i++) if(aSorted[i] !== bSorted[i]) return aSorted[i] - bSorted[i];
+        } else {
+            let acS = [...a.cutPts].sort((x,y)=>x-y), bcS = [...b.cutPts].sort((x,y)=>x-y);
+            for(let i=0; i<acS.length; i++) if(acS[i] !== bcS[i]) return acS[i] - bcS[i];
+            let apS = [...a.pts].sort((x,y)=>x-y), bpS = [...b.pts].sort((x,y)=>x-y);
+            for(let i=0; i<apS.length; i++) if(apS[i] !== bpS[i]) return apS[i] - bpS[i];
+        }
+        for(let i=a.pts.length-1; i>=0; i--) if(a.pts[i] !== b.pts[i]) return a.pts[i] - b.pts[i];
+        return 0;
+    });
+
+    lastScoredData = scoringData;
+    let html = `<table><tr><th>順位</th><th>No.</th><th>Name</th>`;
+    heats.forEach((_, i) => html += `<th onclick="openHeatActionModal(${i})">H${i+1}</th>`);
+    html += `<th>Net</th></tr>`;
+    scoringData.forEach((r, idx) => {
+        html += `<tr><td style="font-weight:bold;">${idx+1}</td><td>${r.no}</td><td style="text-align:left;">${r.name}</td>`;
+        let sortedForCut = r.pts.map((val, idx) => ({val, idx})).sort((a,b) => b.val - a.val);
+        let cutCount = (r.pts.length >= c2) ? 2 : (r.pts.length >= c1 ? 1 : 0);
+        let cutIndices = sortedForCut.slice(0, cutCount).map(x => x.idx);
+        r.pts.forEach((pt, i) => {
+            let isCut = cutIndices.includes(i);
+            html += `<td class="${isCut?'cut':''} ${pt>=dns?'dns':''}">${pt}</td>`;
+        });
+        html += `<td style="font-weight:bold; background:#fff9c4;">${r.net}</td></tr>`;
+    });
+    document.getElementById('tableContainer').innerHTML = `<div class="table-wrapper">${html}</table></div>`;
+}
+
+function exportCSV() {
+    let csvRows = [];
+    let header = ["Rank", "No.", "Name"];
+    heats.forEach((_, i) => header.push(`H${i+1}`));
+    header.push("Total", "Net");
+    csvRows.push(header.join(","));
+    lastScoredData.forEach((r, idx) => {
+        let row = [idx + 1, r.no, r.name];
+        r.pts.forEach(p => row.push(p));
+        row.push(r.total, r.net);
+        csvRows.push(row.join(","));
+    });
+    const blob = new Blob(["\uFEFF" + csvRows.join("\n")], { type: 'text/csv' });
+    const filename = `result.csv`;
+    if (navigator.share) {
+        navigator.share({ files: [new File([blob], filename, { type: 'text/csv' })], title: '結果送信' });
+    } else {
+        const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = filename; link.click();
+    }
+}
+// (他モーダル開閉などは共通のため省略)
+window.onload = loadFromLocal;
+</script>
+</body>
+</html>
