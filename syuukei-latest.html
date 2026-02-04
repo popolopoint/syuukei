@@ -33,8 +33,8 @@
 <h3>集計ちゃん <span style="font-size:0.7em;">v3.7.2w by Popolo App.com</span></h3>
 
 <div class="save-panel">
-  <button onclick="saveToFile()" style="flex:1;">データ保存</button>
-  <button onclick="document.getElementById('fileInput').click()" style="flex:1;">データ読込</button>
+  <button onclick="saveToFile()" style="flex:1;">集計データを保存.json</button>
+  <button onclick="document.getElementById('fileInput').click()" style="flex:1;">集計データを読込.json</button>
   <button onclick="clearAllData()" style="background:#f44336; color:white; flex:0.5;">消去</button>
   <input type="file" id="fileInput" style="display:none" accept=".json" onchange="loadFromFile(event)">
 </div>
@@ -61,7 +61,7 @@
   <button onclick="forceRecalc()" class="calc-btn" style="margin-top:15px;">集計表を更新</button>
   <div style="display: flex; gap:10px;">
     <button onclick="exportCSV()" class="csv-btn">CSV送信</button>
-    <button onclick="copyForLine()" class="copy-btn">LINEコピー</button>
+    <button onclick="copyForLine()" class="copy-btn">テキストコピー</button>
   </div>
 </div>
 
