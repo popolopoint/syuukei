@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>集計ちゃん v3.7.2z</title>
+<title>集計ちゃん v3.7.3a</title>
 <style>
   body { font-size: 20px; font-family: sans-serif; padding: 15px; line-height: 1.4; background-color: #f9f9f9; color: #333; }
   .table-wrapper { overflow-x: auto; margin-top: 20px; background: white; border: 1px solid #999; -webkit-overflow-scrolling: touch; }
@@ -50,7 +50,7 @@
 
 
 
-<h3>集計ちゃん <span style="font-size:0.7em;">v3.7.2z by Popolo App.com</span></h3>
+<h3>集計ちゃん <span style="font-size:0.7em;">v3.7.3a by Popolo App.com</span></h3>
 
 <div class="save-panel">
   <button onclick="saveToFile()" style="flex:1;">集計データを保存.json</button>
@@ -73,10 +73,34 @@
 
 <div style="margin-top:15px;">
   <button onclick="openPartModal()" style="background:#f44336; color:white; width:100%;">選手名を入力・編集</button>
-  <div class="import-area">
-    <b>CSVから選手登録:</b><br>
-    <input type="file" id="csvPartInput" accept=".csv" onchange="importParticipantsCSV(event)" style="font-size:22px; margin-top:5px;">
-  </div>
+  
+
+
+
+
+<div class="import-area">
+  <b>CSVから選手登録:</b><br>
+  
+  <button type="button" class="custom-file-btn" onclick="document.getElementById('csvPartInput').click()">
+    ファイルを選択
+  </button>
+
+  <input type="file" id="csvPartInput" accept=".csv" onchange="importParticipantsCSV(event)" style="display:none;">
+</div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
   <input type="hidden" id="participantList">
   <button onclick="forceRecalc()" class="calc-btn" style="margin-top:15px;">集計表を更新</button>
   <div style="display: flex; gap:10px;">
